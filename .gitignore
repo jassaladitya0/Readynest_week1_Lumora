@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+lumora/.venv/
+
+# Environment variables / Secrets
+.env
+.env.local
+
+# Project specific
+lumora/uploads/*
+!lumora/uploads/.gitkeep
+lumora/outputs/*
+!lumora/outputs/.gitkeep
+
+# IDEs
+.vscode/
+.idea/
+.gemini/
+.history/
+*.log

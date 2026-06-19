@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: lumora
+    runtime: python
+    rootDir: lumora
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app

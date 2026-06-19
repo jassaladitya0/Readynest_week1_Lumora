@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumora — Illuminate Your Data</title>
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/logo.svg') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<header class="navbar">
+  <div class="navbar-inner">
+    <div class="brand">
+      <img src="{{ url_for('static', filename='img/logo.svg') }}" alt="Lumora logo" class="logo">
+      <span class="brand-name">LUMORA</span>
+      <span class="brand-tag">Illuminate Your Data</span>
+    </div>
+    <div class="author">by Aditya Jassal</div>
+  </div>
+</header>
+
+<section class="hero">
+  <h1>Upload. Clean. <span class="grad-text">Discover.</span></h1>
+  <p class="hero-sub">Drop any dataset — CSV, XLSX, or JSON, any size — and Lumora auto-cleans it,
+    analyzes it, builds your dashboard, and packages a full PDF report. No setup. No code.</p>
+</section>
+
+<section class="upload-section" id="upload-section">
+  <div class="upload-box" id="dropzone">
+    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.json,.tsv" hidden>
+    <div class="upload-icon">⬆</div>
+    <p class="upload-title">Drag & drop your dataset here</p>
+    <p class="upload-sub">or click to browse · CSV / XLSX / JSON / TSV · any size</p>
+    <button class="btn btn-primary" id="browseBtn">Choose File</button>
+  </div>
+  <div class="upload-status" id="uploadStatus"></div>
+  <div class="progress-wrap" id="progressWrap" style="display:none;">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+</section>
+
+<section class="dashboard" id="dashboard" style="display:none;">
+
+  <div class="dash-header">
+    <div>
+      <h2 id="datasetName">Dataset</h2>
+      <p class="muted" id="shapeInfo"></p>
+    </div>
+    <div class="dash-actions">
+      <button class="btn btn-outline" id="newUploadBtn">Upload New File</button>
+      <div class="dropdown">
+        <button class="btn btn-secondary" id="downloadCleanBtn">Download Cleaned Data ▾</button>
+        <div class="dropdown-menu" id="cleanDropdown">
+          <a href="#" data-fmt="csv">as CSV</a>
+          <a href="#" data-fmt="xlsx">as XLSX</a>
+          <a href="#" data-fmt="json">as JSON</a>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="downloadReportBtn">Download Full PDF Report</button>
+    </div>
+  </div>
+
+  <div class="cards-row" id="cleaningCards"></div>
+
+  <div class="panel">
+    <h3>Key Insights</h3>
+    <ul class="insights-list" id="insightsList"></ul>
+  </div>
+
+  <div class="panel">
+    <h3>Descriptive Statistics</h3>
+    <div class="table-scroll">
+      <table class="stats-table" id="numericStatsTable"></table>
+    </div>
+    <div class="table-scroll">
+      <table class="stats-table" id="catStatsTable"></table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Univariate Analysis</h3>
+    <div class="chart-grid" id="univariateGrid"></div>
+  </div>
+
+  <div class="panel">
+    <h3>Bivariate Analysis</h3>
+    <div class="chart-grid" id="bivariateGrid"></div>
+  </div>
+
+  <div class="panel">
+    <h3>Data Preview (Cleaned)</h3>
+    <div class="table-scroll">
+      <table class="stats-table" id="previewTable"></table>
+    </div>
+  </div>
+
+</section>
+
+<footer class="site-footer">
+  <p>LUMORA — Illuminate Your Data &nbsp;|&nbsp; Made by Aditya Jassal</p>
+</footer>
+
+<div class="loading-overlay" id="loadingOverlay" style="display:none;">
+  <div class="spinner"></div>
+  <p id="loadingText">Cleaning & analyzing your dataset…</p>
+</div>
+
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
