@@ -4,9 +4,11 @@ services:
     runtime: python
     rootDir: lumora
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --timeout 120 --workers 1 --threads 4 --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --timeout 300 --workers 2 --threads 4 --worker-class gthread --bind 0.0.0.0:$PORT --keep-alive 5
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: MPLCONFIGDIR
         value: /tmp/matplotlib
+      - key: SECRET_KEY
+        generateValue: true

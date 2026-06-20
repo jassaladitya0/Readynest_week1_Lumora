@@ -1,93 +1,139 @@
-// script.js — Lumora frontend logic
+// script.js — Lumora frontend logic (async polling version)
 
-const dropzone = document.getElementById("dropzone");
-const fileInput = document.getElementById("fileInput");
-const browseBtn = document.getElementById("browseBtn");
-const uploadStatus = document.getElementById("uploadStatus");
-const progressWrap = document.getElementById("progressWrap");
-const progressBar = document.getElementById("progressBar");
-const uploadSection = document.getElementById("upload-section");
-const dashboard = document.getElementById("dashboard");
+const dropzone       = document.getElementById("dropzone");
+const fileInput      = document.getElementById("fileInput");
+const browseBtn      = document.getElementById("browseBtn");
+const uploadStatus   = document.getElementById("uploadStatus");
+const progressWrap   = document.getElementById("progressWrap");
+const progressBar    = document.getElementById("progressBar");
+const uploadSection  = document.getElementById("upload-section");
+const dashboard      = document.getElementById("dashboard");
 const loadingOverlay = document.getElementById("loadingOverlay");
-const newUploadBtn = document.getElementById("newUploadBtn");
+const loadingText    = document.getElementById("loadingText");
+const newUploadBtn   = document.getElementById("newUploadBtn");
 const downloadReportBtn = document.getElementById("downloadReportBtn");
-const downloadCleanBtn = document.getElementById("downloadCleanBtn");
-const cleanDropdown = document.getElementById("cleanDropdown");
+const downloadCleanBtn  = document.getElementById("downloadCleanBtn");
+const cleanDropdown     = document.getElementById("cleanDropdown");
 
 let currentSessionId = null;
+let pollInterval     = null;
 
-browseBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  fileInput.click();
-});
-dropzone.addEventListener("click", () => {
-  fileInput.click();
-});
-fileInput.addEventListener("click", (e) => {
-  e.stopPropagation();
-});
+// ── File picker / drag-drop ──────────────────────────────────────────────────
 
-dropzone.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  dropzone.classList.add("dragover");
-});
+browseBtn.addEventListener("click", (e) => { e.stopPropagation(); fileInput.click(); });
+dropzone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("click", (e) => e.stopPropagation());
+
+dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
 dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
 dropzone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropzone.classList.remove("dragover");
-  if (e.dataTransfer.files.length) {
-    handleFile(e.dataTransfer.files[0]);
-  }
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
-
 fileInput.addEventListener("change", () => {
   if (fileInput.files.length) handleFile(fileInput.files[0]);
 });
+
+// ── Upload → immediate 202 → poll status ────────────────────────────────────
 
 function handleFile(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  uploadStatus.textContent = `Uploading "${file.name}"...`;
+  uploadStatus.textContent = `Uploading "${file.name}"…`;
   progressWrap.style.display = "block";
-  progressBar.style.width = "10%";
+  progressBar.style.width = "5%";
+  loadingOverlay.style.display = "flex";
+  loadingText.textContent = "Uploading your dataset…";
 
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/api/upload");
 
   xhr.upload.addEventListener("progress", (e) => {
     if (e.lengthComputable) {
-      const pct = Math.min(90, (e.loaded / e.total) * 90);
+      const pct = Math.min(30, (e.loaded / e.total) * 30);
       progressBar.style.width = pct + "%";
     }
   });
 
   xhr.onload = () => {
-    progressBar.style.width = "100%";
-    if (xhr.status === 200) {
-      const data = JSON.parse(xhr.responseText);
-      currentSessionId = data.session_id;
-      renderDashboard(data);
-      uploadStatus.textContent = "";
-      progressWrap.style.display = "none";
+    if (xhr.status === 202) {
+      const { session_id } = JSON.parse(xhr.responseText);
+      currentSessionId = session_id;
+      uploadStatus.textContent = "File uploaded. Processing…";
+      loadingText.textContent = "Cleaning & analysing your dataset…";
+      progressBar.style.width = "35%";
+      startPolling(session_id);
     } else {
       let msg = "Upload failed.";
-      try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e2) {}
-      uploadStatus.textContent = "❌ " + msg;
-      progressWrap.style.display = "none";
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
+      showError(msg);
     }
-    loadingOverlay.style.display = "none";
   };
 
-  xhr.onerror = () => {
-    uploadStatus.textContent = "❌ Network error during upload.";
-    progressWrap.style.display = "none";
-    loadingOverlay.style.display = "none";
-  };
+  xhr.onerror = () => showError("Network error during upload. Please try again.");
 
-  loadingOverlay.style.display = "flex";
   xhr.send(formData);
 }
+
+// ── Polling ──────────────────────────────────────────────────────────────────
+
+const POLL_MESSAGES = [
+  "Cleaning & analysing your dataset…",
+  "Generating visualisations…",
+  "Computing statistics…",
+  "Almost there…",
+];
+let pollMsgIdx = 0;
+
+function startPolling(session_id) {
+  let dots = 35;
+  pollMsgIdx = 0;
+
+  pollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/status/${session_id}`);
+      const json = await res.json();
+
+      if (json.status === "done") {
+        clearInterval(pollInterval);
+        progressBar.style.width = "100%";
+        loadingText.textContent = "Done!";
+        setTimeout(() => {
+          loadingOverlay.style.display = "none";
+          progressWrap.style.display = "none";
+          uploadStatus.textContent = "";
+          renderDashboard(json.data);
+        }, 400);
+
+      } else if (json.status === "error") {
+        clearInterval(pollInterval);
+        showError(json.error || "Processing failed. Please try again.");
+
+      } else {
+        // still processing — animate progress bar and rotate messages
+        dots = Math.min(90, dots + 3);
+        progressBar.style.width = dots + "%";
+        loadingText.textContent = POLL_MESSAGES[pollMsgIdx % POLL_MESSAGES.length];
+        pollMsgIdx++;
+      }
+    } catch (err) {
+      // Network glitch — keep polling
+      console.warn("Poll error (will retry):", err);
+    }
+  }, 2000);
+}
+
+function showError(msg) {
+  if (pollInterval) clearInterval(pollInterval);
+  uploadStatus.textContent = "❌ " + msg;
+  progressWrap.style.display = "none";
+  loadingOverlay.style.display = "none";
+  fileInput.value = "";
+}
+
+// ── Dashboard rendering ──────────────────────────────────────────────────────
 
 function renderDashboard(data) {
   uploadSection.style.display = "none";
@@ -99,39 +145,31 @@ function renderDashboard(data) {
   document.getElementById("shapeInfo").textContent =
     `${r0.toLocaleString()} → ${r1.toLocaleString()} rows  •  ${c1} columns after cleaning`;
 
-  // Cleaning summary cards
-  const cardsRow = document.getElementById("cleaningCards");
+  // Cleaning cards
+  const cardsRow   = document.getElementById("cleaningCards");
   const filledCount = Object.keys(data.clean_report.missing_values_filled || {}).length;
   cardsRow.innerHTML = `
     <div class="info-card"><div class="label">Rows (cleaned)</div><div class="value">${r1.toLocaleString()}</div></div>
     <div class="info-card"><div class="label">Columns</div><div class="value">${c1}</div></div>
     <div class="info-card"><div class="label">Duplicates removed</div><div class="value">${data.clean_report.duplicates_removed}</div></div>
-    <div class="info-card"><div class="label">Columns with missing data fixed</div><div class="value">${filledCount}</div></div>
+    <div class="info-card"><div class="label">Columns fixed</div><div class="value">${filledCount}</div></div>
   `;
 
   // Insights
-  const insightsList = document.getElementById("insightsList");
-  insightsList.innerHTML = data.insights.map(i => `<li>${escapeHtml(i)}</li>`).join("");
+  document.getElementById("insightsList").innerHTML =
+    data.insights.map(i => `<li>${escapeHtml(i)}</li>`).join("");
 
-  // Numeric stats table
-  const numTable = document.getElementById("numericStatsTable");
-  numTable.innerHTML = buildTable(data.stats.numeric);
+  // Stats tables
+  document.getElementById("numericStatsTable").innerHTML = buildTable(data.stats.numeric);
+  document.getElementById("catStatsTable").innerHTML     = buildTable(data.stats.categorical);
 
-  // Categorical stats table
-  const catTable = document.getElementById("catStatsTable");
-  catTable.innerHTML = buildTable(data.stats.categorical);
+  // Charts
+  document.getElementById("univariateGrid").innerHTML = data.uni_charts.map(chartCard).join("");
+  document.getElementById("bivariateGrid").innerHTML  = data.bi_charts.map(chartCard).join("");
 
-  // Univariate charts
-  const uniGrid = document.getElementById("univariateGrid");
-  uniGrid.innerHTML = data.uni_charts.map(chartCard).join("");
-
-  // Bivariate charts
-  const biGrid = document.getElementById("bivariateGrid");
-  biGrid.innerHTML = data.bi_charts.map(chartCard).join("");
-
-  // Preview table
-  const previewTable = document.getElementById("previewTable");
-  previewTable.innerHTML = buildPreviewTable(data.preview_cols, data.preview_rows);
+  // Preview
+  document.getElementById("previewTable").innerHTML =
+    buildPreviewTable(data.preview_cols, data.preview_rows);
 }
 
 function chartCard(chart) {
@@ -148,8 +186,7 @@ function buildTable(rows) {
   rows.forEach(row => {
     html += "<tr>" + cols.map(c => `<td>${escapeHtml(String(row[c]))}</td>`).join("") + "</tr>";
   });
-  html += "</tbody>";
-  return html;
+  return html + "</tbody>";
 }
 
 function buildPreviewTable(cols, rows) {
@@ -157,8 +194,7 @@ function buildPreviewTable(cols, rows) {
   rows.forEach(row => {
     html += "<tr>" + cols.map(c => `<td>${escapeHtml(String(row[c]))}</td>`).join("") + "</tr>";
   });
-  html += "</tbody>";
-  return html;
+  return html + "</tbody>";
 }
 
 function escapeHtml(str) {
@@ -167,11 +203,15 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// ── Button actions ───────────────────────────────────────────────────────────
+
 newUploadBtn.addEventListener("click", () => {
+  if (pollInterval) clearInterval(pollInterval);
   dashboard.style.display = "none";
   uploadSection.style.display = "block";
   fileInput.value = "";
   currentSessionId = null;
+  uploadStatus.textContent = "";
 });
 
 downloadReportBtn.addEventListener("click", () => {
@@ -190,7 +230,6 @@ cleanDropdown.querySelectorAll("a").forEach(a => {
   a.addEventListener("click", (e) => {
     e.preventDefault();
     if (!currentSessionId) return;
-    const fmt = a.dataset.fmt;
-    window.location.href = `/api/download/cleaned/${currentSessionId}/${fmt}`;
+    window.location.href = `/api/download/cleaned/${currentSessionId}/${a.dataset.fmt}`;
   });
 });
