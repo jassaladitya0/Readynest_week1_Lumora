@@ -10,23 +10,30 @@ import os
 import io
 import uuid
 import pickle
+import logging
 from flask import Flask, render_template, request, jsonify, send_file, Response, stream_with_context
 
 from cleaning import load_dataset, clean_dataset, save_dataset
 from analysis import descriptive_stats, univariate_charts, bivariate_charts, extract_insights
 from report import build_pdf_report
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+# Configure logging so errors appear in Render logs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Use /tmp for file storage — Render's app directory is read-only on the free tier.
+# /tmp is always writable on any Linux-based platform (Render, Railway, HuggingFace, etc.)
+UPLOAD_DIR = "/tmp/lumora_uploads"
+OUTPUT_DIR = "/tmp/lumora_outputs"
+
 ALLOWED_EXT = {"csv", "xlsx", "xls", "json", "tsv"}
-MAX_CONTENT_LENGTH = 200 * 1024 * 1024  # 200 MB — "any size" dataset support
+MAX_CONTENT_LENGTH = 200 * 1024 * 1024  # 200 MB
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.secret_key = "lumora-secret-key-change-me"
+app.secret_key = os.environ.get("SECRET_KEY", "lumora-secret-key-change-me")
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 # In-memory session store: session_id -> {df, clean_report, dataset_name}
@@ -57,35 +64,57 @@ def upload():
     session_id = str(uuid.uuid4())
     ext = file.filename.rsplit(".", 1)[1].lower()
     saved_path = os.path.join(UPLOAD_DIR, f"{session_id}.{ext}")
-    file.save(saved_path)
+
+    try:
+        file.save(saved_path)
+        logger.info(f"[upload] File saved to {saved_path}")
+    except Exception as e:
+        logger.error(f"[upload] Failed to save file: {e}")
+        return jsonify({"error": f"Server could not save the uploaded file: {str(e)}"}), 500
 
     try:
         raw_df = load_dataset(saved_path)
+        logger.info(f"[upload] Dataset loaded: {raw_df.shape}")
         cleaned_df, clean_report = clean_dataset(raw_df)
+        logger.info(f"[upload] Cleaned: {cleaned_df.shape}")
     except Exception as e:
+        logger.error(f"[upload] Processing error: {e}", exc_info=True)
         return jsonify({"error": f"Failed to process file: {str(e)}"}), 500
     finally:
         if os.path.exists(saved_path):
             os.remove(saved_path)
 
-    # Run analysis
-    stats = descriptive_stats(cleaned_df)
-    uni_charts = univariate_charts(cleaned_df)
-    bi_charts = bivariate_charts(cleaned_df)
-    insights = extract_insights(cleaned_df, clean_report)
+    try:
+        # Run analysis
+        stats = descriptive_stats(cleaned_df)
+        logger.info("[upload] Stats done")
+        uni_charts = univariate_charts(cleaned_df)
+        logger.info("[upload] Uni charts done")
+        bi_charts = bivariate_charts(cleaned_df)
+        logger.info("[upload] Bi charts done")
+        insights = extract_insights(cleaned_df, clean_report)
+        logger.info("[upload] Insights done")
+    except Exception as e:
+        logger.error(f"[upload] Analysis error: {e}", exc_info=True)
+        return jsonify({"error": f"Failed to analyse dataset: {str(e)}"}), 500
 
-    # Persist session data to disk (pickle) keyed by session_id
-    session_path = os.path.join(OUTPUT_DIR, f"{session_id}.pkl")
-    with open(session_path, "wb") as f:
-        pickle.dump({
-            "df": cleaned_df,
-            "clean_report": clean_report,
-            "dataset_name": file.filename,
-            "stats": stats,
-            "uni_charts": uni_charts,
-            "bi_charts": bi_charts,
-            "insights": insights,
-        }, f)
+    try:
+        # Persist session data to disk (pickle) keyed by session_id
+        session_path = os.path.join(OUTPUT_DIR, f"{session_id}.pkl")
+        with open(session_path, "wb") as f:
+            pickle.dump({
+                "df": cleaned_df,
+                "clean_report": clean_report,
+                "dataset_name": file.filename,
+                "stats": stats,
+                "uni_charts": uni_charts,
+                "bi_charts": bi_charts,
+                "insights": insights,
+            }, f)
+        logger.info(f"[upload] Session saved: {session_id}")
+    except Exception as e:
+        logger.error(f"[upload] Session save error: {e}", exc_info=True)
+        return jsonify({"error": f"Failed to store session: {str(e)}"}), 500
 
     preview = cleaned_df.head(10).fillna("").astype(str).to_dict(orient="records")
     preview_cols = list(cleaned_df.columns)
@@ -94,8 +123,8 @@ def upload():
         "session_id": session_id,
         "dataset_name": file.filename,
         "clean_report": {
-            "original_shape": clean_report["original_shape"],
-            "cleaned_shape": clean_report["cleaned_shape"],
+            "original_shape": list(clean_report["original_shape"]),
+            "cleaned_shape": list(clean_report["cleaned_shape"]),
             "duplicates_removed": clean_report["duplicates_removed"],
             "missing_values_filled": clean_report["missing_values_filled"],
         },

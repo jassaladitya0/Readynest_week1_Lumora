@@ -7,8 +7,12 @@ can be embedded directly into the dashboard HTML and the PDF report.
 Performance: All chart functions automatically sample the DataFrame to MAX_PLOT_ROWS
 before rendering so even 300k-row datasets produce charts in seconds.
 """
+import os
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)  # suppress pandas/seaborn noise
+
+# Ensure matplotlib can write its config/cache on read-only filesystems (e.g. Render)
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib
 matplotlib.use("Agg")
