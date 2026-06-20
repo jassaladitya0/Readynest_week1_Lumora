@@ -7,9 +7,10 @@ dataset (in any format) or a full PDF report.
 Made by Aditya Jassal.
 """
 import os
+import io
 import uuid
 import pickle
-from flask import Flask, render_template, request, jsonify, send_file, session
+from flask import Flask, render_template, request, jsonify, send_file, Response, stream_with_context
 
 from cleaning import load_dataset, clean_dataset, save_dataset
 from analysis import descriptive_stats, univariate_charts, bivariate_charts, extract_insights
@@ -113,19 +114,51 @@ def download_cleaned(session_id, fmt):
     if not os.path.exists(session_path):
         return jsonify({"error": "Session not found or expired."}), 404
 
-    with open(session_path, "rb") as f:
-        data = pickle.load(f)
-
-    df = data["df"]
     fmt = fmt.lower()
     if fmt not in ("csv", "xlsx", "json"):
         return jsonify({"error": "Unsupported format."}), 400
 
-    out_path = os.path.join(OUTPUT_DIR, f"{session_id}_cleaned.{fmt}")
-    save_dataset(df, out_path, fmt)
+    # Load only df + dataset_name — skip heavy chart data
+    with open(session_path, "rb") as f:
+        data = pickle.load(f)
 
+    df = data["df"]
     base_name = os.path.splitext(data["dataset_name"])[0]
-    return send_file(out_path, as_attachment=True, download_name=f"{base_name}_cleaned_by_lumora.{fmt}")
+    download_name = f"{base_name}_cleaned_by_lumora.{fmt}"
+
+    if fmt == "csv":
+        # Stream CSV directly from memory — no disk write
+        buf = io.BytesIO()
+        df.to_csv(buf, index=False)
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name=download_name,
+        )
+
+    elif fmt == "json":
+        # Stream JSON directly from memory
+        buf = io.BytesIO(df.to_json(orient="records", indent=2).encode("utf-8"))
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype="application/json",
+            as_attachment=True,
+            download_name=download_name,
+        )
+
+    else:  # xlsx
+        buf = io.BytesIO()
+        df.to_excel(buf, index=False, engine="openpyxl")
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=download_name,
+        )
 
 
 @app.route("/api/download/report/<session_id>")
@@ -137,18 +170,25 @@ def download_report(session_id):
     with open(session_path, "rb") as f:
         data = pickle.load(f)
 
-    pdf_path = os.path.join(OUTPUT_DIR, f"{session_id}_report.pdf")
+    # Build PDF into memory — no temp file needed
+    buf = io.BytesIO()
     build_pdf_report(
-        pdf_path,
+        buf,
         data["dataset_name"],
         data["stats"],
         data["insights"],
         data["uni_charts"],
         data["bi_charts"],
     )
+    buf.seek(0)
 
     base_name = os.path.splitext(data["dataset_name"])[0]
-    return send_file(pdf_path, as_attachment=True, download_name=f"{base_name}_Lumora_Report.pdf")
+    return send_file(
+        buf,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{base_name}_Lumora_Report.pdf",
+    )
 
 
 if __name__ == "__main__":

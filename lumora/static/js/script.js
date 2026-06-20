@@ -16,8 +16,16 @@ const cleanDropdown = document.getElementById("cleanDropdown");
 
 let currentSessionId = null;
 
-browseBtn.addEventListener("click", () => fileInput.click());
-dropzone.addEventListener("click", () => fileInput.click());
+browseBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  fileInput.click();
+});
+dropzone.addEventListener("click", () => {
+  fileInput.click();
+});
+fileInput.addEventListener("click", (e) => {
+  e.stopPropagation();
+});
 
 dropzone.addEventListener("dragover", (e) => {
   e.preventDefault();
