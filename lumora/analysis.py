@@ -6,13 +6,21 @@ can be embedded directly into the dashboard HTML and the PDF report.
 
 Performance: All chart functions automatically sample the DataFrame to MAX_PLOT_ROWS
 before rendering so even 300k-row datasets produce charts in seconds.
+
+NOTE: Charts are generated sequentially (no ThreadPoolExecutor).
+matplotlib's Agg backend is not thread-safe — concurrent plt calls from multiple
+threads corrupt state silently and produce blank/broken charts on servers.
 """
 import os
 import warnings
+import logging
 warnings.filterwarnings("ignore", category=UserWarning)  # suppress pandas/seaborn noise
+
+logger = logging.getLogger(__name__)
 
 # Ensure matplotlib can write its config/cache on read-only filesystems (e.g. Render)
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 import matplotlib
 matplotlib.use("Agg")
@@ -22,7 +30,6 @@ import pandas as pd
 import numpy as np
 import io
 import base64
-from concurrent.futures import ThreadPoolExecutor
 
 sns.set_theme(style="whitegrid")
 PALETTE = ["#7C3AED", "#22D3EE", "#F472B6", "#34D399", "#FBBF24", "#60A5FA"]
@@ -111,43 +118,35 @@ def _cat_chart(col: str, series: pd.Series) -> dict:
 # ─── Public analysis functions ────────────────────────────────────────────────
 
 def univariate_charts(df: pd.DataFrame, max_cols: int = 6) -> list[dict]:
-    """Generate univariate charts in parallel using a thread pool."""
-    plot_df = _sample(df)  # sample once before spawning threads
+    """Generate univariate charts sequentially (matplotlib Agg is not thread-safe)."""
+    plot_df = _sample(df)
 
     numeric_cols = list(plot_df.select_dtypes(include=np.number).columns)[:max_cols]
-    cat_cols = list(plot_df.select_dtypes(include=["object", "category", "bool"]).columns)[:max_cols]
-
-    tasks = []
-    results_map = {}
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        for col in numeric_cols:
-            fut = pool.submit(_numeric_chart, col, plot_df[col])
-            tasks.append((col, fut, "num"))
-        for col in cat_cols:
-            try:
-                converted_dt = pd.to_datetime(plot_df[col], errors="coerce", format="mixed")
-                non_null = plot_df[col].notna().sum()
-                if non_null > 0 and converted_dt.notna().sum() >= 0.8 * non_null:
-                    continue
-            except Exception:
-                pass
-            fut = pool.submit(_cat_chart, col, plot_df[col])
-            tasks.append((col, fut, "cat"))
-
-        for col, fut, kind in tasks:
-            try:
-                results_map[(col, kind)] = fut.result()
-            except Exception:
-                pass   # skip failed charts silently
+    cat_cols     = list(plot_df.select_dtypes(include=["object", "category", "bool"]).columns)[:max_cols]
 
     charts = []
+
     for col in numeric_cols:
-        if (col, "num") in results_map:
-            charts.append(results_map[(col, "num")])
+        try:
+            charts.append(_numeric_chart(col, plot_df[col]))
+            logger.info(f"[analysis] numeric chart OK: {col}")
+        except Exception as exc:
+            logger.warning(f"[analysis] numeric chart FAILED for {col}: {exc}")
+
     for col in cat_cols:
-        if (col, "cat") in results_map:
-            charts.append(results_map[(col, "cat")])
+        # Skip columns that are actually dates
+        try:
+            converted_dt = pd.to_datetime(plot_df[col], errors="coerce", format="mixed")
+            non_null = plot_df[col].notna().sum()
+            if non_null > 0 and converted_dt.notna().sum() >= 0.8 * non_null:
+                continue
+        except Exception:
+            pass
+        try:
+            charts.append(_cat_chart(col, plot_df[col]))
+            logger.info(f"[analysis] cat chart OK: {col}")
+        except Exception as exc:
+            logger.warning(f"[analysis] cat chart FAILED for {col}: {exc}")
 
     return charts
 

@@ -169,10 +169,36 @@ def status(session_id):
         job = JOBS.get(session_id)
 
     if job is None:
-        # Also check disk in case the server restarted (best-effort)
+        # Check disk — happens when a different gunicorn worker handles the poll,
+        # or after a server restart. Load pickle and return full data payload.
         session_path = os.path.join(OUTPUT_DIR, f"{session_id}.pkl")
         if os.path.exists(session_path):
-            return jsonify({"status": "done"})
+            try:
+                with open(session_path, "rb") as fh:
+                    saved = pickle.load(fh)
+                df           = saved["df"]
+                clean_report = saved["clean_report"]
+                preview      = df.head(10).fillna("").astype(str).to_dict(orient="records")
+                result = {
+                    "session_id":   session_id,
+                    "dataset_name": saved["dataset_name"],
+                    "clean_report": {
+                        "original_shape":        list(clean_report["original_shape"]),
+                        "cleaned_shape":         list(clean_report["cleaned_shape"]),
+                        "duplicates_removed":    clean_report["duplicates_removed"],
+                        "missing_values_filled": clean_report["missing_values_filled"],
+                    },
+                    "stats":        saved["stats"],
+                    "uni_charts":   saved["uni_charts"],
+                    "bi_charts":    saved["bi_charts"],
+                    "insights":     saved["insights"],
+                    "preview_cols": list(df.columns),
+                    "preview_rows": preview,
+                }
+                return jsonify({"status": "done", "data": result})
+            except Exception:
+                # Pickle still being written — report as still processing
+                return jsonify({"status": "processing"})
         return jsonify({"error": "Session not found."}), 404
 
     if job["status"] == "done":
@@ -250,6 +276,46 @@ def download_report(session_id):
         as_attachment=True,
         download_name=f"{base_name}_Lumora_Report.pdf",
     )
+
+
+@app.route("/api/debug/<session_id>")
+def debug_job(session_id):
+    """Lightweight debug endpoint — shows counts, not raw data."""
+    with JOBS_LOCK:
+        job = JOBS.get(session_id)
+
+    if job is None:
+        session_path = os.path.join(OUTPUT_DIR, f"{session_id}.pkl")
+        if os.path.exists(session_path):
+            try:
+                with open(session_path, "rb") as fh:
+                    saved = pickle.load(fh)
+                return jsonify({
+                    "source": "disk",
+                    "dataset_name":      saved.get("dataset_name"),
+                    "insights_count":    len(saved.get("insights", [])),
+                    "uni_charts_count":  len(saved.get("uni_charts", [])),
+                    "bi_charts_count":   len(saved.get("bi_charts", [])),
+                    "stats_numeric":     len(saved.get("stats", {}).get("numeric", [])),
+                    "stats_categorical": len(saved.get("stats", {}).get("categorical", [])),
+                })
+            except Exception as exc:
+                return jsonify({"source": "disk", "error": str(exc)})
+        return jsonify({"error": "Session not found"}), 404
+
+    if job["status"] == "done":
+        d = job["data"]
+        return jsonify({
+            "source":            "memory",
+            "status":            "done",
+            "dataset_name":      d.get("dataset_name"),
+            "insights_count":    len(d.get("insights", [])),
+            "uni_charts_count":  len(d.get("uni_charts", [])),
+            "bi_charts_count":   len(d.get("bi_charts", [])),
+            "stats_numeric":     len(d.get("stats", {}).get("numeric", [])),
+            "stats_categorical": len(d.get("stats", {}).get("categorical", [])),
+        })
+    return jsonify({"source": "memory", "status": job["status"], "error": job.get("error")})
 
 
 if __name__ == "__main__":

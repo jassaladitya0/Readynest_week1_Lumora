@@ -100,10 +100,26 @@ function startPolling(session_id) {
         clearInterval(pollInterval);
         progressBar.style.width = "100%";
         loadingText.textContent = "Done!";
+
+        // Debug: log data counts to browser console
+        const d = json.data || {};
+        console.log("[Lumora] Dashboard data received:", {
+          insights:   (d.insights   || []).length,
+          uni_charts: (d.uni_charts || []).length,
+          bi_charts:  (d.bi_charts  || []).length,
+          stats_numeric: (d.stats?.numeric || []).length,
+          stats_cat:     (d.stats?.categorical || []).length,
+          preview_cols:  (d.preview_cols || []).length,
+        });
+
         setTimeout(() => {
           loadingOverlay.style.display = "none";
           progressWrap.style.display = "none";
           uploadStatus.textContent = "";
+          if (!json.data) {
+            uploadStatus.textContent = "❌ Server returned empty data. Check console for details.";
+            return;
+          }
           renderDashboard(json.data);
         }, 400);
 
