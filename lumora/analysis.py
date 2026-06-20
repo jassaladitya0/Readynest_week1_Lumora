@@ -7,6 +7,9 @@ can be embedded directly into the dashboard HTML and the PDF report.
 Performance: All chart functions automatically sample the DataFrame to MAX_PLOT_ROWS
 before rendering so even 300k-row datasets produce charts in seconds.
 """
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)  # suppress pandas/seaborn noise
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -15,7 +18,7 @@ import pandas as pd
 import numpy as np
 import io
 import base64
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 sns.set_theme(style="whitegrid")
 PALETTE = ["#7C3AED", "#22D3EE", "#F472B6", "#34D399", "#FBBF24", "#60A5FA"]
@@ -91,11 +94,11 @@ def _cat_chart(col: str, series: pd.Series) -> dict:
     """Bar chart for top categories of one categorical column."""
     vc = series.value_counts().head(8)
     n = len(vc)
-    # Cycle palette to exactly match bar count — avoids seaborn warning
     colors_for_bars = (PALETTE * ((n // len(PALETTE)) + 1))[:n]
     fig, ax = plt.subplots(figsize=(6, 3.5))
-    sns.barplot(x=vc.values, y=vc.index.astype(str), hue=vc.index.astype(str),
-                palette=colors_for_bars, legend=False, ax=ax)
+    # Use matplotlib directly — avoids seaborn hue/palette count warnings
+    bars = ax.barh(vc.index.astype(str)[::-1], vc.values[::-1], color=colors_for_bars[::-1])
+    ax.set_xlabel("Count")
     ax.set_title(f"Top categories: {col}")
     fig.tight_layout()
     return {"title": f"Top values of {col}", "img": _fig_to_base64(fig), "type": "univariate-categorical"}

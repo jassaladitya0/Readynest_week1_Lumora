@@ -3,6 +3,8 @@ cleaning.py — Lumora
 Handles automatic loading and cleaning of CSV / Excel / JSON datasets of any size.
 Optimized for large datasets (millions of rows) with chunked reading and smart sampling.
 """
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 import pandas as pd
 import numpy as np
 import os
